@@ -1,0 +1,494 @@
+---
+title: "Comparación y selección de modelos de pronóstico para las ventas minoristas y los servicios de alimentación en Estados Unidos"
+author:
+  - "Michael Umaña Guillén"
+  - "Leonardo Chinchilla Segura"
+  - "Carlos Chacón Sanabria"
+date: "2026"
+format:
+  pdf:
+    number-sections: true
+lang: es
+bibliography: referencias.bib
+csl: apa.csl
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+# Resumen {.unnumbered}
+
+En esta investigación comparamos la capacidad predictiva de cuatro familias de modelos aplicadas a las ventas minoristas y los servicios de alimentación de Estados Unidos, registradas mensualmente en la serie RSAFSNA. Analizamos 417 observaciones comprendidas entre enero de 1992 y septiembre de 2026, de las cuales utilizamos 405 para el entrenamiento y 12 para evaluar los pronósticos. Consideramos modelos de suavizamiento exponencial, SARIMA, regresión con tendencia y estacionalidad y regresión dinámica con errores ARIMA, seleccionando una especificación finalista dentro de cada familia. Para comparar su precisión utilizamos las medidas RMSE, MAE y MAPE sobre el mismo conjunto de prueba, además de examinar los residuos de los modelos. Los resultados mostraron que el modelo SARIMA(2,1,3)(0,1,1)[12] presentó los menores errores de pronóstico, con un RMSE de 8 307.27 millones de dólares, un MAE de 6 838.99 millones y un MAPE de 0.98 %, seguido por la regresión dinámica. Aunque el SARIMA obtuvo el mejor desempeño durante el período evaluado, identificamos limitaciones relacionadas con la sensibilidad del diagnóstico residual al número de rezagos examinados, por lo que recomendamos realizar validaciones temporales adicionales antes de generalizar estos resultados.
+
+**Palabras clave:** series temporales, pronóstico de ventas, SARIMA, regresión dinámica, precisión predictiva.
+
+# Introducción
+
+Las ventas minoristas y los servicios de alimentación representan una parte importante de la actividad económica de Estados Unidos. Su comportamiento permite observar cambios en el consumo y resulta útil para conocer cómo evoluciona la actividad comercial. En esta investigación analizamos la serie RSAFSNA, publicada por la Oficina del Censo de Estados Unidos y disponible en la base de datos FRED. Esta serie registra las ventas mensuales en millones de dólares, sin ajuste estacional [@fred_rsafsna].
+
+El pronóstico de ventas ha sido estudiado mediante diferentes métodos estadísticos. @chu2003 compararon modelos lineales y no lineales para pronosticar ventas minoristas agregadas y analizaron las diferencias en su capacidad predictiva. Por su parte, Aye et al. (2015) evaluaron 26 modelos de pronóstico aplicados a las ventas minoristas de Sudáfrica y encontraron que su desempeño variaba según el horizonte y los criterios de evaluación utilizados [@aye2015]. Más recientemente, Makridakis et al. (2022) compararon métodos de pronóstico utilizando 42 840 series de ventas de Walmart, como parte de la competencia M5 [@makridakis2022].
+
+Estos antecedentes muestran la importancia de comparar distintas alternativas antes de seleccionar un modelo de pronóstico. Aunque las investigaciones mencionadas utilizan datos y contextos diferentes, nos permiten reconocer que la precisión de los modelos puede variar según las características de la serie. En nuestro caso, las ventas presentan una tendencia creciente, fluctuaciones estacionales y cambios importantes durante períodos como la recesión de 2008-2009 y la pandemia de COVID-19.
+
+A partir de estas características, nos interesa determinar cuál de las metodologías evaluadas permite obtener pronósticos más precisos de las ventas minoristas y los servicios de alimentación de Estados Unidos. Para ello, comparamos cuatro familias de modelos: suavizamiento exponencial, SARIMA, regresión con series temporales y regresión dinámica con errores ARIMA. Utilizamos observaciones mensuales desde enero de 1992 hasta septiembre de 2026, seleccionamos un modelo finalista dentro de cada familia y evaluamos su precisión mediante RMSE, MAE y MAPE. Nuestro propósito es identificar el modelo que presente el mejor desempeño predictivo durante el período de evaluación.
+
+# Metodología
+
+## Datos y fuente de información
+
+Para esta investigación utilizamos la serie temporal RSAFSNA, correspondiente a las ventas minoristas y los servicios de alimentación de Estados Unidos. Los datos provienen de la Oficina del Censo de Estados Unidos y se encuentran disponibles en la base de datos Federal Reserve Economic Data (FRED). La serie tiene frecuencia mensual, se expresa en millones de dólares y no está ajustada estacionalmente [@fred_rsafsna].
+
+El período analizado comprende desde enero de 1992 hasta septiembre de 2026, con un total de 417 observaciones. Para evaluar la capacidad predictiva de los modelos, dividimos la serie cronológicamente en dos conjuntos. El conjunto de entrenamiento contiene 405 observaciones, desde enero de 1992 hasta septiembre de 2025, mientras que el conjunto de prueba incluye las 12 observaciones restantes, correspondientes a octubre de 2025 hasta septiembre de 2026.
+
+Esta división nos permite ajustar los modelos utilizando las observaciones históricas y comparar sus pronósticos con los valores reales del período de prueba. Mantuvimos el mismo conjunto de prueba para las cuatro familias de modelos, con el propósito de realizar una comparación bajo condiciones equivalentes.
+
+```{r}
+library(ggplot2)
+
+# Cargar los datos
+datos <- read.csv("C:/Users/Lenovo/Downloads/Proyecto_Final_Series_Temporales_RSAFSNA/proyecto_RSAFSNA/datos_RSAFSNA.csv")
+
+datos$observation_date <- as.Date(datos$observation_date)
+datos <- datos[order(datos$observation_date), ]
+
+# Separar entrenamiento y prueba
+datos_train <- subset(datos, observation_date <= as.Date("2025-09-01"))
+datos_test <- subset(datos, observation_date >= as.Date("2025-10-01"))
+```
+
+## Calidad de los datos
+
+Antes de ajustar los modelos, revisamos la calidad de la información para comprobar que la serie fuera adecuada para el análisis. Verificamos la presencia de valores faltantes, fechas duplicadas y posibles interrupciones en la secuencia mensual. También comprobamos que los valores de ventas fueran positivos.
+
+La revisión confirmó que las 417 observaciones están completas y ordenadas cronológicamente, sin meses faltantes ni registros duplicados. Por lo tanto, no fue necesario realizar imputaciones ni eliminar observaciones para construir la serie temporal.
+
+```{r}
+# Crear la secuencia mensual esperada
+fechas_esperadas <- seq(
+  min(datos$observation_date, na.rm = TRUE),
+  max(datos$observation_date, na.rm = TRUE),
+  by = "month"
+)
+
+# Verificar la calidad de los datos
+calidad <- data.frame(
+  Verificacion = c(
+    "Total de observaciones",
+    "Fechas faltantes",
+    "Ventas faltantes",
+    "Fechas duplicadas",
+    "Meses ausentes",
+    "Ventas no positivas"
+  ),
+  Resultado = c(
+    nrow(datos),
+    sum(is.na(datos$observation_date)),
+    sum(is.na(datos$RSAFSNA)),
+    sum(duplicated(datos$observation_date)),
+    length(setdiff(fechas_esperadas,
+                   datos$observation_date)),
+    sum(datos$RSAFSNA <= 0, na.rm = TRUE)
+  )
+)
+```
+
+## Análisis exploratorio
+
+Antes de ajustar los modelos de pronóstico, realizamos un análisis exploratorio de la serie RSAFSNA para identificar su comportamiento a lo largo del tiempo. Examinamos la tendencia, las variaciones estacionales y los cambios más importantes en las ventas, con el propósito de orientar la selección de las especificaciones que posteriormente evaluamos.
+
+```{r}
+ggplot(datos_train, aes(x = observation_date, y = RSAFSNA)) +
+  geom_line(color = "black", linewidth = 0.5) +
+  labs(
+    title = "Evolución mensual de las ventas minoristas y servicios de alimentación",
+    x = "Año",
+    y = "Ventas (millones de dólares)"
+  ) +
+  theme_minimal()
+```
+
+En la evolución de la serie de entrenamiento observamos una tendencia creciente de las ventas, acompañada de fluctuaciones que se repiten a lo largo de los años. La amplitud de estas variaciones aumenta conforme crece el nivel de las ventas, lo que sugiere la presencia de estacionalidad multiplicativa. También identificamos disminuciones importantes alrededor de 2008-2009 y durante 2020. Estas características orientaron la selección de modelos que permiten representar la tendencia y la estacionalidad, así como evaluar la incorporación de intervenciones para los períodos de cambios extraordinarios.
+
+```{r}
+library(forecast)
+
+# Serie temporal de entrenamiento
+train <- ts(datos_train$RSAFSNA,
+            start = c(1992, 1),
+            frequency = 12)
+
+ggseasonplot(train,
+             year.labels = FALSE,
+             continuous = TRUE) +
+  labs(
+    title = "Comportamiento estacional de las ventas",
+    x = "Mes",
+    y = "Ventas (millones de dólares)"
+  )
+```
+
+El gráfico estacional muestra que las ventas presentan un comportamiento que se repite a lo largo de los años. Se observa que diciembre registra generalmente los valores más altos, mientras que febrero y septiembre presentan niveles relativamente menores. También se identifican aumentos durante marzo y mayo. Aunque este patrón se mantiene en buena parte del período analizado, existen algunas variaciones, especialmente durante 2020. Además, las diferencias absolutas entre los meses tienden a ser mayores en los años recientes.
+
+Para complementar el análisis exploratorio, examinamos las funciones de autocorrelación (ACF) y autocorrelación parcial (PACF) de la serie de entrenamiento.
+
+```{r}
+library(astsa)
+
+acf2(train)
+```
+
+El análisis de las funciones de autocorrelación (ACF) y autocorrelación parcial (PACF) muestra una fuerte dependencia temporal en la serie original, ya que la ACF presenta valores elevados que disminuyen lentamente, pasando de 0.96 en el primer rezago a 0.89 en el rezago 12 y 0.78 en el rezago 24, lo que sugiere que la serie no es estacionaria y que su comportamiento no corresponde al de un ruido blanco. Por su parte, la PACF presenta valores importantes en los rezagos 1, 12 y 13, lo que permite identificar una dependencia temporal con componentes estacionales.
+
+```{r}
+# Transformación logarítmica
+serie_log <- log(train)
+
+serie_dif1 <- diff(serie_log)
+
+# Diferencia estacional de 12 meses
+serie_dif <- diff(serie_dif1, lag = 12)
+
+# Gráfico de la serie diferenciada
+ts.plot(serie_dif,
+        main = "Serie transformada y diferenciada",
+        xlab = "Año",
+        ylab = "Diferencias del logaritmo")
+
+# ACF y PACF de la serie diferenciada
+acf2(serie_dif)
+```
+
+Después de aplicar la transformación logarítmica y las diferencias regular y estacional, observamos que la serie oscila alrededor de cero, aunque presenta fluctuaciones importantes durante 2020 y 2021. La ACF y la PACF muestran una menor persistencia, pero mantienen autocorrelaciones significativas en el rezago 12 (-0.36 y -0.33, respectivamente), lo que indica que la serie diferenciada todavía no se comporta como ruido blanco.
+
+## Especificación de los modelos
+
+Para elaborar los pronósticos, consideramos cuatro familias de modelos: suavizamiento exponencial, SARIMA, regresión con series temporales y regresión dinámica con errores ARIMA. Dentro de cada familia evaluamos diferentes especificaciones y seleccionamos un modelo finalista según sus características y criterios de evaluación.
+
+### Suavizamiento exponencial
+
+Para esta familia consideramos métodos de suavizamiento exponencial con diferentes componentes de tendencia y estacionalidad. El modelo finalista fue Holt-Winters multiplicativo, que permite representar una tendencia y fluctuaciones estacionales proporcionales al nivel de las ventas. Su ecuación de pronóstico es:
+
+$$
+\widehat{Y}_{t+h|t}=(\ell_t+hb_t)S_{t+h-12},
+\qquad h=1,\ldots,12
+$$ {#eq-hw}
+
+donde $\ell_t$ representa el nivel estimado de las ventas, $b_t$ la tendencia, $S_t$ el componente estacional y $h$ el horizonte de pronóstico.
+
+### Modelo SARIMA
+
+Para esta familia evaluamos diferentes combinaciones de parámetros autorregresivos y de medias móviles, tanto regulares como estacionales. El modelo finalista fue SARIMA(2,1,3)(0,1,1)\[12\], con transformación logarítmica, una diferencia regular y una diferencia estacional de período 12. Su estructura se expresa mediante la siguiente ecuación:
+
+$$
+(1-\phi_1B-\phi_2B^2)(1-B)(1-B^{12})\log(Y_t)
+=
+(1-\theta_1B-\theta_2B^2-\theta_3B^3)
+(1-\Theta_1B^{12})\varepsilon_t
+$$ {#eq-sarima}
+
+donde $B$ representa el operador de rezago, $\phi_1$ y $\phi_2$ son los coeficientes autorregresivos, $\theta_1$, $\theta_2$ y $\theta_3$ corresponden a los coeficientes de medias móviles, $\Theta_1$ representa el componente estacional y $\varepsilon_t$ corresponde al ruido blanco.
+
+### Regresión con tendencia y estacionalidad
+
+Para esta familia evaluamos diferentes especificaciones de regresión, considerando tendencias lineales y cuadráticas, así como componentes estacionales. Seleccionamos la regresión log-lineal con tendencia y estacionalidad, cuya ecuación se expresa de la siguiente manera:
+
+$$
+\log(Y_t)=\beta_0+\beta_1t+
+\sum_{m=2}^{12}\gamma_m D_{m,t}+\varepsilon_t
+$$ {#eq-regresion}
+
+donde $Y_t$ representa las ventas mensuales, $t$ corresponde al tiempo, $\beta_0$ es el intercepto, $\beta_1$ representa la tendencia y $D_{m,t}$ son variables indicadoras de los meses, tomando enero como categoría de referencia, mientras que $\varepsilon_t$ corresponde al término de error.
+
+
+
+### Regresión dinámica con errores ARIMA
+
+Para esta familia evaluamos diferentes estructuras de errores ARIMA, incorporando una tendencia determinística, variables indicadoras mensuales y dos intervenciones asociadas con la recesión de 2008-2009 y la pandemia de COVID-19. El modelo finalista utiliza una transformación logarítmica y errores ARIMA(3,0,3)(1,0,1)[12], cuya especificación es:
+
+$$
+\begin{aligned}
+\log(Y_t) &= \beta_0+\beta_1\frac{t}{12}
++\sum_{m=1}^{11}\gamma_m D_{m,t}
++\delta_1 R_t+\delta_2 P_t+\eta_t,\\
+\phi_3(B)\Phi_1(B^{12})\eta_t
+&=\theta_3(B)\Theta_1(B^{12})\varepsilon_t
+\end{aligned}
+$$ {#eq-dinamica}
+
+donde $t$ representa el tiempo, $D_{m,t}$ corresponde a las variables indicadoras mensuales, tomando diciembre como referencia, mientras que $R_t$ y $P_t$ representan las intervenciones asociadas con la recesión y la pandemia, respectivamente. Por su parte, $\eta_t$ sigue un proceso ARIMA estacional y $\varepsilon_t$ corresponde al ruido blanco.
+
+
+## Criterios de selección y comparación de modelos
+
+Dentro de cada familia evaluamos diferentes especificaciones y seleccionamos un modelo finalista según sus características. Para los métodos de suavizamiento exponencial consideramos las medidas de error y el comportamiento de la tendencia y la estacionalidad, mientras que para SARIMA y regresión dinámica utilizamos el AICc, la estabilidad de los parámetros y el diagnóstico de los residuos. En los modelos de regresión también examinamos la significancia de los coeficientes y los errores de ajuste.
+
+Para evaluar la dependencia temporal restante utilizamos la ACF de los residuos y la prueba de Ljung-Box, considerando un nivel de significancia del 5 %. Un valor p superior a 0.05 se interpretó como ausencia de evidencia suficiente para rechazar la hipótesis de ruido blanco.
+
+Finalmente, comparamos los cuatro finalistas mediante RMSE, MAE y MAPE, calculados sobre los mismos 12 meses de prueba, dando prioridad al RMSE para seleccionar el modelo con mayor precisión predictiva en el período evaluado.
+
+
+## Software y paquetes utilizados
+
+El análisis se realizó con el software R [@R2024], utilizando RStudio como entorno de trabajo. Para el ajuste de los modelos y la elaboración de pronósticos empleamos el paquete `forecast` [@forecast2026; @hyndman2008], mientras que `ggplot2` [@ggplot2016] se utilizó para las representaciones gráficas y `astsa` [@astsa2026] para el análisis de las funciones de autocorrelación. Las referencias se obtuvieron mediante la función `citation()` de R.
+
+# Resultados
+
+## Selección de modelos finalistas
+
+### Suavizamiento exponencial
+
+Dentro de esta familia comparamos diferentes métodos de suavizamiento exponencial, considerando modelos con tendencia y estacionalidad. Seleccionamos Holt-Winters multiplicativo porque presentó el menor RMSE de entrenamiento entre las especificaciones evaluadas, con un valor de 11 079.24 millones de dólares. Este resultado es consistente con el comportamiento estacional observado, cuya amplitud aumenta conforme crece el nivel de las ventas.
+
+
+```{r}
+# Modelo Holt-Winters multiplicativo
+ht1 <- hw(train, seasonal = "multiplicative", h = 12)
+
+accuracy(ht1)
+
+# Diagnóstico de residuos
+checkresiduals(ht1)
+```
+Dentro de la familia de suavizamiento exponencial seleccionamos Holt-Winters multiplicativo, que presentó el menor RMSE de entrenamiento entre las especificaciones evaluadas, con 11 079.24 millones de dólares y un MAPE de 1.74 %. Sin embargo, la prueba de Ljung-Box presentó un valor p inferior a 0.05, lo que indica que los residuos presentan autocorrelación y no se comportan como ruido blanco, por lo que el modelo no logró capturar completamente la dependencia temporal de la serie.
+
+### Modelo SARIMA
+
+
+```{r}
+# Ajuste del modelo SARIMA finalista
+sarima_final <- Arima(
+  train,
+  order = c(2, 1, 3),
+  seasonal = list(order = c(0, 1, 1), period = 12),
+  lambda = 0
+)
+
+summary(sarima_final)
+
+# Medidas de error en entrenamiento
+accuracy(sarima_final)
+
+# Diagnóstico de residuos
+checkresiduals(sarima_final)
+```
+Dentro de la familia SARIMA seleccionamos el modelo (2,1,3)(0,1,1)[12], considerando el AICc, la estimación de sus parámetros y el diagnóstico de residuos. El modelo obtuvo un AICc de -1788.02, un RMSE de entrenamiento de 10 662.07 millones de dólares y un MAPE de 1.55 %, mientras que la prueba de Ljung-Box presentó un valor p de 0.1025, por lo que no encontramos evidencia suficiente para rechazar que los residuos se comporten como ruido blanco, aunque persisten fluctuaciones importantes durante 2020.
+
+### Regresión con tendencia y estacionalidad
+
+
+```{r}
+# Ajuste de la regresión log-lineal
+reg_final <- tslm(
+  train ~ trend + season,
+  lambda = 0
+)
+
+summary(reg_final)
+```
+
+```{r}
+# Medidas de error en entrenamiento
+accuracy(reg_final)
+
+# Diagnóstico de residuos
+checkresiduals(reg_final)
+```
+
+Dentro de la familia de regresión seleccionamos el modelo log-lineal con tendencia y estacionalidad, que presentó un R² ajustado de 0.975 y un RMSE de entrenamiento de 24 891 millones de dólares. La tendencia y los efectos estacionales de marzo a diciembre resultaron estadísticamente significativos, mientras que febrero no presentó diferencias significativas respecto a enero. Sin embargo, la prueba de Breusch-Godfrey presentó un valor p inferior a 0.001, lo que evidencia autocorrelación en los residuos y muestra que el modelo no logró explicar completamente la dependencia temporal de las ventas.
+
+### Regresión dinámica con errores ARIMA
+
+```{r}
+# Fechas del conjunto de entrenamiento
+fechas_train <- datos_train$observation_date
+
+# Variable de intervención: recesión
+recesion <- as.integer(
+  fechas_train >= as.Date("2008-08-01") &
+  fechas_train <= as.Date("2009-10-01")
+)
+
+# Variable de intervención: pandemia
+pandemia <- as.integer(
+  fechas_train >= as.Date("2020-03-01") &
+  fechas_train <= as.Date("2023-05-01")
+)
+
+X_modelo <- cbind(
+  tendencia = seq_along(train) / 12,
+  seasonaldummy(train),
+  recesion = recesion,
+  pandemia = pandemia
+)
+
+# Ajuste de la regresión dinámica
+reg_dinamica_final <- Arima(
+  train,
+  order = c(3, 0, 3),
+  seasonal = list(order = c(1, 0, 1), period = 12),
+  xreg = X_modelo,
+  lambda = 0,
+  method = "ML"
+)
+
+summary(reg_dinamica_final)
+
+# Errores de entrenamiento
+accuracy(reg_dinamica_final)
+
+# Diagnóstico de residuos
+checkresiduals(reg_dinamica_final)
+```
+Dentro de la familia de regresión dinámica seleccionamos el modelo con errores ARIMA(3,0,3)(1,0,1)[12], que incorpora tendencia, estacionalidad e intervenciones para la recesión y la pandemia. Este modelo obtuvo un AICc de -1870.86, un RMSE de entrenamiento de 10 134.97 millones de dólares y un MAPE de 1.50 %, mientras que la prueba de Ljung-Box presentó un valor p de 0.1149, por lo que no encontramos evidencia suficiente para rechazar que los residuos se comporten como ruido blanco, aunque persisten fluctuaciones importantes durante 2020.
+
+## Comparación de los modelos finalistas
+
+```{r}
+# Serie de prueba
+test <- ts(datos_test$RSAFSNA,
+           start = c(2025, 10),
+           frequency = 12)
+
+# Pronósticos de los cuatro finalistas
+pron_hw <- ht1
+
+pron_sarima <- forecast(sarima_final, h = 12)
+
+pron_reg <- forecast(reg_final, h = 12)
+
+X_futuro <- cbind(
+  tendencia = (length(train) + seq_len(12)) / 12,
+  seasonaldummy(test),
+  recesion = rep(0, 12),
+  pandemia = rep(0, 12)
+)
+
+X_futuro <- X_futuro[, colnames(X_modelo), drop = FALSE]
+
+pron_dinamica <- forecast(
+  reg_dinamica_final,
+  xreg = X_futuro
+)
+
+# Medidas de error de TEST
+modelos <- list(
+  "Holt-Winters multiplicativo" = pron_hw,
+  "SARIMA" = pron_sarima,
+  "Regresión log-lineal" = pron_reg,
+  "Regresión dinámica" = pron_dinamica
+)
+
+tabla_test <- do.call(rbind, lapply(modelos, function(modelo) {
+  medidas <- accuracy(modelo, test)["Test set",
+                                    c("RMSE", "MAE", "MAPE")]
+  return(medidas)
+}))
+
+tabla_test <- data.frame(
+  Modelo = rownames(tabla_test),
+  round(tabla_test, 2),
+  row.names = NULL
+)
+
+tabla_test
+
+```
+
+Al comparar los cuatro modelos con los datos de prueba, observamos que el SARIMA presentó la mayor precisión, con un RMSE de 8 307.27 millones de dólares y un MAPE de 0.98 %, seguido por la regresión dinámica, con un RMSE de 8 826.56 millones y un MAPE de 1.04 %. Por su parte, Holt-Winters multiplicativo y la regresión log-lineal presentaron errores mayores, lo que favorece al SARIMA en términos de precisión predictiva.
+
+
+```{r}
+datos_grafico <- data.frame(
+  fecha = datos_test$observation_date,
+  observado = as.numeric(test),
+  hw = as.numeric(pron_hw$mean),
+  sarima = as.numeric(pron_sarima$mean),
+  regresion = as.numeric(pron_reg$mean),
+  dinamica = as.numeric(pron_dinamica$mean)
+)
+
+# Gráfico de pronósticos contra valores reales
+ggplot(datos_grafico, aes(x = fecha)) +
+  geom_line(aes(y = observado, color = "Observado"),
+            linewidth = 1.2) +
+  geom_point(aes(y = observado, color = "Observado"),
+             size = 1.8) +
+  geom_line(aes(y = hw, color = "Holt-Winters"),
+            linewidth = 0.8) +
+  geom_line(aes(y = sarima, color = "SARIMA"),
+            linewidth = 0.8) +
+  geom_line(aes(y = regresion, color = "Regresión log-lineal"),
+            linewidth = 0.8) +
+  geom_line(aes(y = dinamica, color = "Regresión dinámica"),
+            linewidth = 0.8) +
+  scale_x_date(
+    date_breaks = "2 months",
+    date_labels = "%m/%Y"
+  ) +
+  labs(
+    title = "Pronósticos de los modelos finalistas",
+    x = "Mes",
+    y = "Ventas (millones de dólares)",
+    color = "Serie"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+Al comparar los pronósticos con los valores observados, encontramos que los cuatro modelos lograron reproducir las principales fluctuaciones estacionales de las ventas, aunque el SARIMA y la regresión dinámica mostraron una mayor cercanía a los datos reales. Esta diferencia coincide con los resultados de la tabla comparativa, donde el SARIMA presentó los menores errores de pronóstico durante el período de prueba.
+
+
+## Diagnóstico de residuos
+
+El análisis de residuos mostró autocorrelación significativa en Holt-Winters y la regresión log-lineal, mientras que el SARIMA y la regresión dinámica presentaron valores p de 0.1025 y 0.1149 en la prueba de Ljung-Box, respectivamente, por lo que no se rechazó la hipótesis de ruido blanco. 
+
+## Pronóstico final con intervalos de predicción
+
+```{r}
+# Serie completa
+serie_completa <- ts(datos$RSAFSNA,
+                     start = c(1992, 1),
+                     frequency = 12)
+
+sarima_completo <- Arima(
+  serie_completa,
+  order = c(2, 1, 3),
+  seasonal = list(order = c(0, 1, 1), period = 12),
+  lambda = 0
+)
+
+# Pronóstico de los próximos 12 meses
+pron_final <- forecast(
+  sarima_completo,
+  h = 12,
+  level = c(80, 95)
+)
+
+# Gráfico con intervalos de predicción
+autoplot(pron_final) +
+  coord_cartesian(xlim = c(2023, 2028)) +
+  labs(
+    title = "Pronóstico final de las ventas mediante SARIMA",
+    x = "Año",
+    y = "Ventas (millones de dólares)"
+  ) +
+  theme_minimal()
+```
+Después de seleccionar el modelo SARIMA, lo ajustamos nuevamente con las 417 observaciones para pronosticar las ventas de octubre de 2026 a septiembre de 2027. Los resultados muestran que se mantiene el comportamiento estacional de la serie, con aumentos hacia diciembre y disminuciones al inicio del año, mientras que los intervalos de predicción del 80 % y 95 % reflejan una mayor incertidumbre conforme aumenta el horizonte de pronóstico.
+
+# Conclusiones
+
+En esta investigación comparamos cuatro familias de modelos para pronosticar las ventas minoristas y los servicios de alimentación de Estados Unidos. A partir de los resultados, seleccionamos el modelo SARIMA(2,1,3)(0,1,1)[12], ya que presentó los menores errores durante el período de prueba, con un RMSE de 8 307.27 millones de dólares y un MAPE de 0.98 %, seguido por la regresión dinámica, cuyo desempeño también fue favorable.
+
+El análisis permitió identificar una tendencia creciente, un comportamiento estacional marcado y cambios importantes durante períodos extraordinarios, especialmente en 2020. Además, observamos que los modelos SARIMA y de regresión dinámica lograron representar mejor estas características que Holt-Winters y la regresión log-lineal, lo que se reflejó en una mayor precisión de sus pronósticos.
+
+Aunque el SARIMA obtuvo los mejores resultados predictivos, presentó limitaciones relacionadas con la sensibilidad del diagnóstico de autocorrelación residual al número de rezagos examinados y la presencia de observaciones extraordinarias. Asimismo, la comparación se realizó sobre un horizonte de 12 meses y el conjunto de prueba se consultó durante la exploración de modelos, por lo que recomendamos realizar validaciones temporales adicionales y estudiar otras formas de incorporar cambios extraordinarios antes de generalizar los resultados a períodos futuros.
+
+
+# Referencias {.unnumbered}
+
+::: {#refs}
+:::
+
